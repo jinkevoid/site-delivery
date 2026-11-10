@@ -41,3 +41,10 @@ def test_owner_transfer_progress_and_conflict():
         upload = bob.post(url+'/attachments', files={'file':('test.txt', b'hello', 'text/plain')})
         assert upload.status_code == 201
         assert alice.get('/api/v1/attachments/'+upload.json()['id']+'/download').content == b'hello'
+        tag = bob.post('/api/v1/tags', json={'name':'2026重点'}).json()
+        assert alice.post(url+'/tags/'+tag['id']).status_code == 403
+        assert bob.post(url+'/tags/'+tag['id']).status_code == 200
+        assert bob.get(url).json()['tags'][0]['name'] == '2026重点'
+        latest = bob.get(url+'/progress').json()[0]
+        assert bob.post('/api/v1/progress/'+latest['id']+'/void').status_code == 200
+        assert bob.get(url).json()['latest_progress']['content'] == '补录旧进展'

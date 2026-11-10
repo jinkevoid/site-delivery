@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -116,6 +116,15 @@ class ChatGroup(Base):
     group_id: Mapped[str] = mapped_column(String)
     name: Mapped[str] = mapped_column(String)
     remark: Mapped[str] = mapped_column(Text, default="")
+class Tag(Base):
+    __tablename__ = "tags"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    color: Mapped[str] = mapped_column(String, default="#6354b8")
+class SiteTag(Base):
+    __tablename__ = "site_tags"
+    site_id: Mapped[str] = mapped_column(ForeignKey("sites.id"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id"), primary_key=True)
 
 def hash_password(password):
     salt = secrets.token_hex(16)
@@ -131,7 +140,7 @@ def current_user(session: Session = Depends(db), session_token: str | None = Coo
     token = hashlib.sha256((session_token or "").encode()).hexdigest()
     login = session.get(LoginSession, token)
     user = session.get(User, login.user_id) if login else None
-    if not user or not user.active or login.created_at < now() - __import__('datetime').timedelta(days=1): raise HTTPException(401, "请先登录")
+    if not user or not user.active or login.created_at < now() - timedelta(days=1): raise HTTPException(401, "请先登录")
     return user
 def get_site(session, site_id, user, write=False):
     site = session.get(Site, site_id)
@@ -143,7 +152,8 @@ def valid_owner(session, owner_id):
     if not user or not user.active: raise HTTPException(422, "负责人不存在或已停用")
 def serialize_site(session, site):
     latest = session.scalar(select(Progress).where(Progress.site_id == site.id, Progress.void == False).order_by(Progress.occurred_at.desc(), Progress.created_at.desc(), Progress.id.desc()).limit(1))
-    return {"id": site.id, "name": site.name, "owner_id": site.owner_id, "status": site.status, "region": site.region, "country": site.country, "city": site.city, "operator": site.operator, "remark": site.remark, "version": site.version, "archived": site.archived, "latest_progress": {"id": latest.id, "content": latest.content, "occurred_at": latest.occurred_at} if latest else None}
+    tags = session.scalars(select(Tag).join(SiteTag, Tag.id == SiteTag.tag_id).where(SiteTag.site_id == site.id)).all()
+    return {"id": site.id, "name": site.name, "owner_id": site.owner_id, "status": site.status, "region": site.region, "country": site.country, "city": site.city, "operator": site.operator, "remark": site.remark, "version": site.version, "archived": site.archived, "tags": [{"id": t.id, "name": t.name, "color": t.color} for t in tags], "latest_progress": {"id": latest.id, "content": latest.content, "occurred_at": latest.occurred_at} if latest else None}
 
 class Credentials(BaseModel):
     username: str
@@ -242,6 +252,15 @@ def progress_list(site_id: str, user: User = Depends(current_user), session: Ses
 def todo_list(site_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     get_site(session, site_id, user)
     return [{"id": t.id, "content": t.content, "due_date": t.due_date, "done": t.done} for t in session.scalars(select(Todo).where(Todo.site_id == site_id))]
+@app.post("/api/v1/sites/{site_id}/todos", status_code=201)
+def add_todo(site_id: str, body: TodoInput, user: User = Depends(current_user), session: Session = Depends(db)):
+    get_site(session, site_id, user, True); todo = Todo(site_id=site_id, **body.model_dump()); session.add(todo); session.commit(); return {"id": todo.id}
+
+@app.post("/api/v1/progress/{progress_id}/void")
+def void_progress(progress_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    progress = session.get(Progress, progress_id)
+    if not progress: raise HTTPException(404, "进展不存在")
+    get_site(session, progress.site_id, user, True); progress.void = True; session.commit(); return {"ok": True}
 @app.post("/api/v1/todos/{todo_id}/complete")
 def complete_todo(todo_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     todo = session.get(Todo, todo_id)
@@ -308,6 +327,28 @@ def create_field(body: FieldInput, user: User = Depends(current_user), session: 
     if body.kind not in {"text", "number", "date", "boolean"}: raise HTTPException(422, "不支持的字段类型")
     if session.scalar(select(FieldDefinition).where(FieldDefinition.name == body.name)): raise HTTPException(409, "字段已存在")
     f = FieldDefinition(**body.model_dump(), created_by=user.id); session.add(f); session.commit(); return {"id": f.id, "name": f.name, "kind": f.kind}
+
+class TagInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    color: str = "#6354b8"
+@app.get("/api/v1/tags")
+def tags(user: User = Depends(current_user), session: Session = Depends(db)):
+    return [{"id": t.id, "name": t.name, "color": t.color} for t in session.scalars(select(Tag).order_by(Tag.name))]
+@app.post("/api/v1/tags", status_code=201)
+def create_tag(body: TagInput, user: User = Depends(current_user), session: Session = Depends(db)):
+    if session.scalar(select(Tag).where(Tag.name == body.name)): raise HTTPException(409, "标签已存在")
+    t=Tag(**body.model_dump()); session.add(t); session.commit(); return {"id":t.id,"name":t.name,"color":t.color}
+@app.post("/api/v1/sites/{site_id}/tags/{tag_id}")
+def add_tag(site_id: str, tag_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    get_site(session, site_id, user, True)
+    if not session.get(Tag, tag_id): raise HTTPException(404, "标签不存在")
+    if not session.get(SiteTag, (site_id, tag_id)): session.add(SiteTag(site_id=site_id, tag_id=tag_id)); session.commit()
+    return {"ok":True}
+@app.delete("/api/v1/sites/{site_id}/tags/{tag_id}")
+def remove_tag(site_id: str, tag_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    get_site(session, site_id, user, True); link=session.get(SiteTag, (site_id, tag_id))
+    if link: session.delete(link); session.commit()
+    return {"ok":True}
 @app.get("/api/v1/sites/{site_id}/fields")
 def field_values(site_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     get_site(session, site_id, user); return {v.field_id: v.value for v in session.scalars(select(FieldValue).where(FieldValue.site_id == site_id))}
