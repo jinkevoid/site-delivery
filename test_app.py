@@ -52,3 +52,23 @@ def test_owner_transfer_progress_and_conflict():
         assert report.status_code == 200 and report.json()[0]['content'] == '补录旧进展'
         assert alice.get('/api/v1/audit-logs').status_code == 403
         assert any(item['action'] == '作废进展' for item in admin.get('/api/v1/audit-logs').json())
+        token = admin.post('/api/v1/admin/tokens', json={'name':'外部工具','user_id':b}).json()
+        with TestClient(service.app) as external:
+            external.headers['Authorization'] = 'Bearer ' + token['token']
+            assert external.get(url).status_code == 200
+            assert external.post(url+'/progress', json={'content':'外部进展','occurred_at':'2026-11-12T00:00:00Z'}).status_code == 201
+            assert admin.delete('/api/v1/admin/tokens/'+token['id']).status_code == 200
+            assert external.get(url).status_code == 401
+        assert alice.delete('/api/v1/attachments/'+upload.json()['id']).status_code == 403
+        assert bob.delete('/api/v1/attachments/'+upload.json()['id']).status_code == 200
+        assert alice.get('/api/v1/attachments/'+upload.json()['id']+'/download').status_code == 404
+        assert admin.post('/api/v1/trash/attachments/'+upload.json()['id']+'/restore').status_code == 200
+        assert alice.get('/api/v1/attachments/'+upload.json()['id']+'/download').content == b'hello'
+        assert admin.post('/api/v1/statuses',json={'name':'客户确认中'}).status_code == 201
+        assert admin.put('/api/v1/statuses/客户确认中',json={'name':'等待确认'}).status_code == 200
+        assert '等待确认' in bob.get('/api/v1/statuses').json()
+        assert bob.get('/api/v1/sites',params={'tag_id':tag['id'],'page_size':1}).json()['total'] == 1
+        import io, openpyxl
+        export=admin.get('/api/v1/reports/progress/export',params={'start':'2026-11-01','end':'2026-11-30'})
+        assert export.status_code == 200
+        assert openpyxl.load_workbook(io.BytesIO(export.content)).active['A1'].value == '局点'
