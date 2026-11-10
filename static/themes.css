@@ -1,0 +1,25 @@
+/* Theme colors are semantic tokens; new themes need a selector and a JS entry. */
+body[data-theme="mist"] { --bg:#f5f6fb; --surface:#fff; --text:#252740; --muted:#71758c; --line:#e1e3f0; --primary:#5b5fc7; --nav:#29294b; }
+body[data-theme="ivory"] { --bg:#efedf0; --surface:rgba(253,252,249,.92); --text:#34333e; --muted:#77727e; --line:#dcd7e0; --primary:#6354b8; --nav:#f7f6f3; }
+.theme-control { position:relative; }
+#theme { display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; padding:0; line-height:1; }
+.theme-menu { position:absolute; right:0; top:47px; z-index:8; width:220px; padding:6px; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 40px #11182733; }
+.theme-option { display:grid; width:100%; grid-template-columns:24px 1fr 16px; gap:10px; align-items:center; text-align:left; background:transparent; border:0; padding:9px; }
+.theme-option b,.theme-option small { display:block; }
+.theme-option small { font-size:11px; margin-top:2px; }
+.theme-check { color:var(--primary); }
+.theme-swatch { width:22px; height:22px; border-radius:6px; border:1px solid #0002; }
+.theme-swatch.ocean { background:linear-gradient(135deg,#152635 50%,#087f79 50%); }
+.theme-swatch.mist { background:linear-gradient(135deg,#29294b 50%,#777bd8 50%); }
+.theme-swatch.dark { background:linear-gradient(135deg,#101820 50%,#53c4b5 50%); }
+.theme-swatch.ivory { background:linear-gradient(135deg,#faf9f5 44%,#6354b8 46% 53%,#e6e3ea 55%); }
+body[data-theme="mist"] nav button.active { background:#41416d; }
+body[data-theme="ivory"] { background-image:linear-gradient(117deg,transparent 40%,#fff9 40.2% 40.5%,transparent 40.8%),linear-gradient(25deg,transparent 65%,#6354b81a 65.2% 65.4%,transparent 65.7%),repeating-radial-gradient(ellipse at 75% 25%,#6354b80b 0 1px,transparent 1px 8px),linear-gradient(135deg,#f8f7f3,#e8e6eb 54%,#f4f1f0); background-attachment:fixed; }
+body[data-theme="ivory"] #app>aside { color:#514e5b; background:linear-gradient(180deg,#faf9f6,#e9e7ec); border-right:1px solid #6354b826; }
+body[data-theme="ivory"] nav button,body[data-theme="ivory"] .profile button { color:#676171; }
+body[data-theme="ivory"] nav button.active { background:#6354b81c; color:#55459f; box-shadow:inset 3px 0 #6354b8; }
+body[data-theme="ivory"] .profile { border-color:#dcd7e0; }
+body[data-theme="ivory"] .panel,body[data-theme="ivory"] .search,body[data-theme="ivory"] .card,body[data-theme="ivory"] dialog,body[data-theme="ivory"] .drawer { backdrop-filter:blur(15px); box-shadow:inset 0 1px #fff,0 12px 34px #3d364e18; }
+body[data-theme="ivory"] .card,body[data-theme="ivory"] .primary { border-radius:3px 10px 3px 10px; }
+body.dark .theme-menu { background:var(--surface); }
+@media(max-width:700px) { .theme-menu { position:fixed; top:65px; right:12px; max-width:calc(100vw - 24px); } }
