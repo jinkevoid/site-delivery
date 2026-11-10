@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?请设置管理员账号}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置管理员密码}
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
