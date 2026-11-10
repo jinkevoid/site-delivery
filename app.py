@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, select
@@ -125,6 +125,16 @@ class SiteTag(Base):
     __tablename__ = "site_tags"
     site_id: Mapped[str] = mapped_column(ForeignKey("sites.id"), primary_key=True)
     tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String)
+    site_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+def audit(session, user, action, site_id=None):
+    session.add(AuditLog(actor_id=user.id, action=action, site_id=site_id))
 
 def hash_password(password):
     salt = secrets.token_hex(16)
@@ -223,7 +233,7 @@ def list_sites(q: str = "", page: int = 1, page_size: int = 20, user: User = Dep
     return {"total": len(records), "items": [serialize_site(session, s) for s in records[(page-1)*page_size:page*page_size]]}
 @app.post("/api/v1/sites", status_code=201)
 def create_site(body: SiteInput, user: User = Depends(current_user), session: Session = Depends(db)):
-    valid_owner(session, body.owner_id); site = Site(**body.model_dump()); session.add(site); session.commit(); return serialize_site(session, site)
+    valid_owner(session, body.owner_id); site = Site(**body.model_dump()); session.add(site); session.flush(); audit(session, user, "创建局点", site.id); session.commit(); return serialize_site(session, site)
 @app.get("/api/v1/sites/{site_id}")
 def read_site(site_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     return serialize_site(session, get_site(session, site_id, user))
@@ -234,7 +244,7 @@ def update_site(site_id: str, body: SiteUpdate, user: User = Depends(current_use
     values = body.model_dump(exclude={"version"}); values.update(version=body.version+1, updated_at=now())
     result = session.execute(update(Site).where(Site.id == site_id, Site.version == body.version).values(**values))
     if result.rowcount != 1: session.rollback(); raise HTTPException(409, "局点已被修改，请刷新后重试")
-    session.commit(); session.expire_all(); return serialize_site(session, session.get(Site, site_id))
+    audit(session, user, "修改局点", site_id); session.commit(); session.expire_all(); return serialize_site(session, session.get(Site, site_id))
 @app.post("/api/v1/sites/{site_id}/progress", status_code=201)
 def add_progress(site_id: str, body: ProgressInput, user: User = Depends(current_user), session: Session = Depends(db)):
     site = get_site(session, site_id, user, True)
@@ -243,7 +253,7 @@ def add_progress(site_id: str, body: ProgressInput, user: User = Depends(current
     p = Progress(site_id=site_id, content=body.content, issue=body.issue, occurred_at=occurred, created_by=user.id)
     session.add(p); session.flush()
     for todo in body.todos: session.add(Todo(site_id=site_id, progress_id=p.id, **todo.model_dump()))
-    site.updated_at = now(); session.commit(); return {"id": p.id, "site": serialize_site(session, site)}
+    site.updated_at = now(); audit(session, user, "新增进展", site_id); session.commit(); return {"id": p.id, "site": serialize_site(session, site)}
 @app.get("/api/v1/sites/{site_id}/progress")
 def progress_list(site_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     get_site(session, site_id, user)
@@ -260,12 +270,22 @@ def add_todo(site_id: str, body: TodoInput, user: User = Depends(current_user), 
 def void_progress(progress_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     progress = session.get(Progress, progress_id)
     if not progress: raise HTTPException(404, "进展不存在")
-    get_site(session, progress.site_id, user, True); progress.void = True; session.commit(); return {"ok": True}
+    get_site(session, progress.site_id, user, True); progress.void = True; audit(session, user, "作废进展", progress.site_id); session.commit(); return {"ok": True}
+
+@app.put("/api/v1/progress/{progress_id}")
+def edit_progress(progress_id: str, body: ProgressInput, user: User = Depends(current_user), session: Session = Depends(db)):
+    progress = session.get(Progress, progress_id)
+    if not progress or progress.void: raise HTTPException(404, "进展不存在")
+    get_site(session, progress.site_id, user, True)
+    occurred = body.occurred_at
+    if occurred.tzinfo: occurred = occurred.astimezone(timezone.utc).replace(tzinfo=None)
+    progress.content = body.content; progress.issue = body.issue; progress.occurred_at = occurred
+    audit(session, user, "修改进展", progress.site_id); session.commit(); return {"ok": True}
 @app.post("/api/v1/todos/{todo_id}/complete")
 def complete_todo(todo_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     todo = session.get(Todo, todo_id)
     if not todo: raise HTTPException(404, "待办不存在")
-    get_site(session, todo.site_id, user, True); todo.done = True; session.commit(); return {"ok": True}
+    get_site(session, todo.site_id, user, True); todo.done = True; audit(session, user, "完成待办", todo.site_id); session.commit(); return {"ok": True}
 
 @app.post("/api/v1/sites/{site_id}/archive")
 def archive_site(site_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
@@ -384,5 +404,28 @@ def groups(site_id: str, user: User = Depends(current_user), session: Session = 
 @app.post("/api/v1/sites/{site_id}/groups", status_code=201)
 def add_group(site_id: str, body: GroupInput, user: User = Depends(current_user), session: Session = Depends(db)):
     get_site(session, site_id, user, True); g=ChatGroup(site_id=site_id, **body.model_dump()); session.add(g); session.commit(); return {"id":g.id}
+
+@app.get("/api/v1/audit-logs")
+def audit_logs(user: User = Depends(current_user), session: Session = Depends(db)):
+    if user.role != "admin": raise HTTPException(403, "需要管理员权限")
+    return [{"action": a.action, "site_id": a.site_id, "actor": session.get(User, a.actor_id).name, "created_at": a.created_at} for a in session.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200))]
+
+@app.get("/api/v1/reports/progress")
+def progress_report(start: str, end: str, owner_id: str = "", user: User = Depends(current_user), session: Session = Depends(db)):
+    try:
+        start_date = datetime.fromisoformat(start); end_date = datetime.fromisoformat(end) + timedelta(days=1)
+    except ValueError: raise HTTPException(422, "日期格式应为 YYYY-MM-DD")
+    query = select(Progress, Site).join(Site, Site.id == Progress.site_id).where(Progress.void == False, Progress.occurred_at >= start_date, Progress.occurred_at < end_date)
+    if owner_id: query = query.where(Progress.created_by == owner_id)
+    return [{"site": s.name, "country": s.country, "occurred_at": p.occurred_at, "content": p.content, "issue": p.issue, "author": session.get(User, p.created_by).name} for p,s in session.execute(query.order_by(Progress.occurred_at.desc()))]
+
+@app.get("/api/v1/reports/progress/export")
+def export_progress(start: str, end: str, owner_id: str = "", user: User = Depends(current_user), session: Session = Depends(db)):
+    import csv, io
+    rows = progress_report(start, end, owner_id, user, session)
+    output = io.StringIO(newline=""); writer = csv.writer(output); writer.writerow(["局点", "国家", "事件时间", "进展", "问题", "记录人"])
+    for row in rows:
+        writer.writerow([str(row[key]).replace('\r',' ').replace('\n',' ') if not str(row[key]).lstrip().startswith(('=','+','-','@')) else "'"+str(row[key]) for key in ("site", "country", "occurred_at", "content", "issue", "author")])
+    return StreamingResponse(iter(["\ufeff" + output.getvalue()]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition":"attachment; filename=progress-report.csv"})
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="frontend")

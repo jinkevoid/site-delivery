@@ -1,0 +1,12 @@
+/* Semantic scrollbar colors and consistent centered icon buttons. */
+body { color-scheme: light; }
+body.dark { color-scheme: dark; scrollbar-color: #536572 #17232b; }
+body.dark * { scrollbar-color: #536572 #17232b; }
+body.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.dark ::-webkit-scrollbar-track { background: #17232b; }
+body.dark ::-webkit-scrollbar-thumb { background: #536572; border: 2px solid #17232b; border-radius: 10px; }
+.actions > button:not(.primary) { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; line-height: 1; }
+@media (max-width:700px) {
+  header .actions { align-items: center; }
+  .actions > button:not(.primary) { flex: 0 0 40px; }
+}

@@ -13,3 +13,5 @@ ADMIN_USERNAME=admin ADMIN_PASSWORD=your-password .venv/bin/uvicorn app:app --re
 浏览器访问 `http://127.0.0.1:8000/`。也可设置 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量后执行 `docker compose up --build`；数据存放在 `data/`。演示数据需自行创建。
 
 执行测试：`.venv/bin/pytest -q`。
+
+备份脚本 `backup.py` 支持通过环境变量配置 SFTP：`SFTP_HOST`、`SFTP_PORT`、`SFTP_USER`、`SFTP_PASSWORD`、`SFTP_DIRECTORY`、`SFTP_KNOWN_HOSTS`。脚本对数据库使用 SQLite 在线备份，并打包快照引用的附件；SFTP 主机密钥必须预先放入 known_hosts。定时执行、保留策略和自动恢复尚未实现。

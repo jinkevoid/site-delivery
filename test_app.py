@@ -48,3 +48,7 @@ def test_owner_transfer_progress_and_conflict():
         latest = bob.get(url+'/progress').json()[0]
         assert bob.post('/api/v1/progress/'+latest['id']+'/void').status_code == 200
         assert bob.get(url).json()['latest_progress']['content'] == '补录旧进展'
+        report = admin.get('/api/v1/reports/progress', params={'start':'2026-11-01','end':'2026-11-30'})
+        assert report.status_code == 200 and report.json()[0]['content'] == '补录旧进展'
+        assert alice.get('/api/v1/audit-logs').status_code == 403
+        assert any(item['action'] == '作废进展' for item in admin.get('/api/v1/audit-logs').json())
